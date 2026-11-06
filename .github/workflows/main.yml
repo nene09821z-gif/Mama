@@ -1,0 +1,136 @@
+name: ViLa Chess Native — build APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find latest zip and prepare build directory
+        id: source
+        run: |
+          set -euo pipefail
+
+          LATEST=$(find . -name "vila-chess-*.zip" -not -path "./.git/*" \
+            | sort -V -r | head -1 || true)
+
+          if [ -n "$LATEST" ]; then
+            echo "📦 Found zip: $LATEST"
+            BUILD_DIR=$(mktemp -d /tmp/chess_src_XXXXXX)
+            unzip -q "$LATEST" -d "$BUILD_DIR"
+
+            GRADLE_ROOT=$(find "$BUILD_DIR" -maxdepth 2 -name "build.gradle.kts" \
+              -not -path "*/app/*" | sort | head -1)
+
+            if [ -n "$GRADLE_ROOT" ]; then
+              GRADLE_ROOT=$(dirname "$GRADLE_ROOT")
+            else
+              echo "❌ build.gradle.kts not found inside zip"
+              exit 1
+            fi
+
+            echo "build_dir=$GRADLE_ROOT"            >> "$GITHUB_OUTPUT"
+            echo "zip_name=$(basename "$LATEST")"    >> "$GITHUB_OUTPUT"
+            echo "✅ Build dir: $GRADLE_ROOT"
+          else
+            echo "📂 No zip found — building from repo root"
+            echo "build_dir=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+            echo "zip_name=repo-root"          >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Unit tests
+        id: tests
+        continue-on-error: true
+        working-directory: ${{ steps.source.outputs.build_dir }}
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Show failed tests in run summary
+        if: always() && steps.tests.outcome == 'failure'
+        run: |
+          {
+            echo "### ❌ Unit tests failed"
+            echo "Source: **${{ steps.source.outputs.zip_name }}**"
+            echo '```'
+            find "${{ steps.source.outputs.build_dir }}/app/build/test-results" \
+              -name "*.xml" 2>/dev/null \
+              | xargs grep -rhE '<testcase|<failure' 2>/dev/null \
+              | grep -B1 '<failure' | cut -c1-400 | head -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build debug APK
+        working-directory: ${{ steps.source.outputs.build_dir }}
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK is non-empty
+        run: |
+          APK="${{ steps.source.outputs.build_dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          if [ -s "$APK" ]; then
+            echo "✅ APK OK — $(du -sh "$APK" | cut -f1)"
+          else
+            echo "❌ APK missing or empty"
+            exit 1
+          fi
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vila-chess-${{ steps.source.outputs.zip_name }}-debug
+          path: ${{ steps.source.outputs.build_dir }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ steps.source.outputs.zip_name }}
+          path: ${{ steps.source.outputs.build_dir }}/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+      - name: Build summary
+        if: always()
+        run: |
+          {
+            echo "## 🏗️ Build Summary"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Source zip** | \`${{ steps.source.outputs.zip_name }}\` |"
+            echo "| **Tests**      | ${{ steps.tests.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail job if unit tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "❌ Unit tests failed — xem run summary."
+          exit 1
