@@ -53,6 +53,47 @@ jobs:
             echo "zip_name=repo-root"          >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Download native Stockfish from official release (optional)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          D="${{ steps.source.outputs.build_dir }}/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$D"
+          T=$(mktemp -d)
+          U=""
+          # Thử bản ổn định mới nhất trước, rồi tới danh sách mọi bản phát hành (kể cả dev).
+          for API in "releases/latest" "releases?per_page=30"; do
+            URLS=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/official-stockfish/Stockfish/$API" \
+              | jq -r '(if type=="array" then .[] else . end) | .assets[]?
+                       | select(.name|test("android";"i"))
+                       | select(.name|test("\\.(tar|tar\\.gz|tgz|zip)$";"i"))
+                       | .browser_download_url' || true)
+            # Ưu tiên bản universal (tự chọn tập lệnh), sau đó arm64/armv8 không dotprod.
+            U=$(echo "$URLS" | grep -i universal | head -1 || true)
+            [ -z "$U" ] && U=$(echo "$URLS" | grep -iv dotprod | grep -iE 'arm64|armv8' | head -1 || true)
+            [ -n "$U" ] && break
+          done
+          BIN=""
+          if [ -n "$U" ]; then
+            echo "⬇️ Tải: $U"
+            if curl -fL --retry 3 -o "$T/asset" "$U"; then
+              if tar -tf "$T/asset" >/dev/null 2>&1; then
+                tar -xf "$T/asset" -C "$T"
+              else
+                unzip -q "$T/asset" -d "$T" || true
+              fi
+              BIN=$(find "$T" -type f -size +2M ! -path "$T/asset" | head -1)
+            fi
+          fi
+          if [ -n "$BIN" ] && [ "$(head -c4 "$BIN" | tail -c3)" = "ELF" ]; then
+            cp "$BIN" "$D/libstockfish.so"
+            echo "✅ Native engine: $(basename "$BIN") — $(du -h "$D/libstockfish.so" | cut -f1)"
+          else
+            echo "⚠️ Không lấy được engine native hợp lệ — app dùng bản wasm lite dự phòng"
+          fi
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -134,3 +175,4 @@ jobs:
         run: |
           echo "❌ Unit tests failed — xem run summary."
           exit 1
+          
