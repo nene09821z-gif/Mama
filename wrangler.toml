@@ -1,0 +1,9 @@
+# Tên PHẢI trùng Worker đã tạo trên Cloudflare (bitter-sun-751a), nếu khác sẽ tạo Worker mới.
+name = "bitter-sun-751a"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# id KV được workflow GitHub tự điền (thay PASTE_KV_NAMESPACE_ID). Chạy tay thì dán id của KV vào đây.
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "PASTE_KV_NAMESPACE_ID"
