@@ -53,6 +53,41 @@ jobs:
             echo "zip_name=repo-root"          >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Use fixed keystore (Secret hoặc file trong repo) — giữ nguyên SHA-1 cũ
+        env:
+          KS_B64: ${{ secrets.VILA_KEYSTORE_B64 }}
+        run: |
+          BD="${{ steps.source.outputs.build_dir }}"
+          mkdir -p "$BD/app"
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$BD/app/vila.keystore"
+            echo "✅ Dùng keystore từ GitHub Secret VILA_KEYSTORE_B64"; exit 0
+          fi
+          for K in "$GITHUB_WORKSPACE/vila.keystore" "$GITHUB_WORKSPACE/app/vila.keystore"; do
+            if [ -f "$K" ]; then cp "$K" "$BD/app/vila.keystore"; echo "✅ Dùng keystore trong repo: $K"; exit 0; fi
+          done
+          echo "ℹ️ Không có keystore ngoài zip — dùng keystore nằm trong zip (nếu có)"
+
+      - name: Inject Google client IDs từ GitHub Secrets (nếu có)
+        env:
+          ANDROID_ID: ${{ secrets.GOOGLE_ANDROID_CLIENT_ID }}
+          WEB_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          F="${{ steps.source.outputs.build_dir }}/app/src/main/res/values/strings.xml"
+          if [ -n "$ANDROID_ID" ]; then
+            sed -i "s|\(<string name=\"google_android_client_id\">\)[^<]*|\1$ANDROID_ID|" "$F"
+            echo "✅ Đã điền google_android_client_id"
+          else
+            echo "ℹ️ Chưa có Secret GOOGLE_ANDROID_CLIENT_ID"
+          fi
+          if [ -n "$WEB_ID" ]; then
+            sed -i "s|\(<string name=\"google_web_client_id\">\)[^<]*|\1$WEB_ID|" "$F"
+            echo "✅ Đã điền google_web_client_id"
+          else
+            echo "ℹ️ Chưa có Secret GOOGLE_WEB_CLIENT_ID (dùng giá trị trong zip)"
+          fi
+          grep -E "google_(android|web)_client_id" "$F" | sed 's/[0-9]\{6,\}-[a-z0-9]*/ID_ĐÃ_ẨN/'
+
       - name: Download native Stockfish from official release (optional)
         continue-on-error: true
         env:
@@ -144,6 +179,35 @@ jobs:
             exit 1
           fi
 
+      - name: Show APK signing fingerprints (SHA-1 / Facebook key hash)
+        if: always()
+        run: |
+          APK="${{ steps.source.outputs.build_dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -s "$APK" ]; then echo "APK chưa có"; exit 0; fi
+          AS=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          SHA1=$("$AS" verify --print-certs "$APK" | grep -i "SHA-1 digest" | head -1 | awk '{print $NF}')
+          SHA1C=$(echo "$SHA1" | sed 's/../&:/g; s/:$//' | tr a-f A-F)
+          FBHASH=$(echo "$SHA1" | xxd -r -p | base64)
+          if [ -f "${{ steps.source.outputs.build_dir }}/app/vila.keystore" ]; then
+            NOTE="✅ APK được ký bằng app/vila.keystore (cố định)"
+          else
+            NOTE="⚠️ Không thấy app/vila.keystore: APK ký bằng khoá debug ngẫu nhiên, SHA-1 sẽ đổi mỗi lần build"
+          fi
+          {
+            echo "## 🔑 Chữ ký APK"
+            echo "$NOTE"
+            echo ""
+            echo "**SHA-1 (dán vào Google Cloud, client Android):**"
+            echo '```'
+            echo "$SHA1C"
+            echo '```'
+            echo "**Key hash (dán vào Facebook Developers):**"
+            echo '```'
+            echo "$FBHASH"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$NOTE"; echo "SHA-1: $SHA1C"; echo "FB key hash: $FBHASH"
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -175,4 +239,3 @@ jobs:
         run: |
           echo "❌ Unit tests failed — xem run summary."
           exit 1
-          
