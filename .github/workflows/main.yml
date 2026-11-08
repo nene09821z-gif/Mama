@@ -129,19 +129,12 @@ jobs:
             echo "⚠️ Không lấy được engine native hợp lệ — app dùng bản wasm lite dự phòng"
           fi
 
-      - name: Generate puzzles.db — 50.000 câu đố Lichess, Rating tăng dần (dễ → khó)
+      - name: Generate puzzles.db from Lichess (50.000 câu dễ nhất) — nếu chưa có
         continue-on-error: true
-        timeout-minutes: 15
-        working-directory: ${{ steps.source.outputs.build_dir }}
         run: |
-          set -euo pipefail
-          trap 'echo "::warning::Không tạo được puzzles.db — APK vẫn build, nhưng chưa có dữ liệu câu đố"' ERR
-          if [ ! -f scripts/generate_puzzles.py ]; then
-            echo "ℹ️ Không có scripts/generate_puzzles.py trong source — bỏ qua"; exit 0
-          fi
-          command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
-          python3 scripts/generate_puzzles.py --out app/src/main/assets/puzzles.db
-          ls -lh app/src/main/assets/puzzles.db
+          BD="${{ steps.source.outputs.build_dir }}"
+          if [ -s "$BD/app/src/main/assets/puzzles.db" ]; then echo "✅ puzzles.db có sẵn"; exit 0; fi
+          python3 "$BD/scripts/generate_puzzles.py" --out "$BD/app/src/main/assets/puzzles.db"             || echo "⚠️ Không tạo được puzzles.db — app dùng bộ câu đố dự phòng"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -253,3 +246,4 @@ jobs:
         run: |
           echo "❌ Unit tests failed — xem run summary."
           exit 1
+          
