@@ -129,6 +129,35 @@ jobs:
             echo "⚠️ Không lấy được engine native hợp lệ — app dùng bản wasm lite dự phòng"
           fi
 
+      - name: Download full opening book (Lichess chess-openings, CC0) — nhãn Book + tên khai cuộc trên bàn cờ phân tích
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          BD="${{ steps.source.outputs.build_dir }}"
+          OUT="$BD/app/src/main/assets/openings.tsv"
+          mkdir -p "$(dirname "$OUT")"
+          TMP=$(mktemp -d)
+          BASE="https://raw.githubusercontent.com/lichess-org/chess-openings/master"
+          printf 'eco\tname\tpgn\n' > "$TMP/all.tsv"
+          FAILED=0
+          # a.tsv … e.tsv = 5 phần ECO. Mỗi file: dòng đầu là tiêu đề (bỏ), giữ 3 cột đầu: eco, name, pgn.
+          for L in a b c d e; do
+            if curl -fsSL --retry 4 --retry-delay 3 "$BASE/$L.tsv" -o "$TMP/$L.tsv"; then
+              tail -n +2 "$TMP/$L.tsv" | tr -d '\r' | cut -f1-3 >> "$TMP/all.tsv"
+            else
+              echo "⚠️ Không tải được $L.tsv"; FAILED=1
+            fi
+          done
+          N=$(( $(wc -l < "$TMP/all.tsv") - 1 ))
+          # Bộ đầy đủ ~3.600 dòng. Dưới 3.000 (thiếu file/tải lỗi) thì KHÔNG ghi đè: app dùng bản sẵn có hoặc bộ rút gọn trong code.
+          if [ "$FAILED" -eq 0 ] && [ "$N" -ge 3000 ]; then
+            cp "$TMP/all.tsv" "$OUT"
+            echo "✅ Opening book: $N khai cuộc — $(du -h "$OUT" | cut -f1)"
+            echo "📖 Opening book: **$N** khai cuộc (Lichess chess-openings)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Opening book chưa đủ ($N dòng, lỗi tải=$FAILED) — app dùng bộ khai cuộc rút gọn dự phòng"
+          fi
+
       - name: Generate puzzles.db from Lichess (50.000 câu dễ nhất) — nếu chưa có
         continue-on-error: true
         run: |
