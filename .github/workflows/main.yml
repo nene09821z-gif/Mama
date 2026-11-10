@@ -158,12 +158,17 @@ jobs:
             echo "⚠️ Opening book chưa đủ ($N dòng, lỗi tải=$FAILED) — app dùng bộ khai cuộc rút gọn dự phòng"
           fi
 
-      - name: Generate puzzles.db from Lichess (50.000 câu dễ nhất) — nếu chưa có
+      - name: Generate puzzles.db + khóa học chiến thuật từ Lichess (300.000 câu đủ chủ đề, dễ → khó) — nếu chưa có
         continue-on-error: true
         run: |
           BD="${{ steps.source.outputs.build_dir }}"
           if [ -s "$BD/app/src/main/assets/puzzles.db" ]; then echo "✅ puzzles.db có sẵn"; exit 0; fi
-          python3 "$BD/scripts/generate_puzzles.py" --out "$BD/app/src/main/assets/puzzles.db"             || echo "⚠️ Không tạo được puzzles.db — app dùng bộ câu đố dự phòng"
+          pip install --quiet zstandard || true
+          python3 "$BD/scripts/generate_puzzles.py" \
+            --out "$BD/app/src/main/assets/puzzles.db" \
+            --lessons-out "$BD/app/src/main/java/com/vila/chess/game/LessonLichessData.kt" \
+            --count 300000 \
+            || echo "⚠️ Không tạo được puzzles.db — app dùng bộ câu đố dự phòng"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
