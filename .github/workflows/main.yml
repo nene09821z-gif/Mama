@@ -170,16 +170,6 @@ jobs:
             --count 300000 \
             || echo "⚠️ Không tạo được puzzles.db — app dùng bộ câu đố dự phòng"
 
-      - name: Generate chuyển động riêng cho từng bot (BotMotionData.kt) — theo Elo, tự cập nhật khi thêm bot
-        continue-on-error: true
-        run: |
-          BD="${{ steps.source.outputs.build_dir }}"
-          python3 "$BD/scripts/gen_bot_motion.py" \
-            --repo "$BD/app/src/main/java/com/vila/chess/bots/BotRepository.kt" \
-            --out "$BD/app/src/main/java/com/vila/chess/bots/BotMotionData.kt" \
-            && echo "🤖 Bot motion: đã sinh BotMotionData.kt" >> "$GITHUB_STEP_SUMMARY" \
-            || echo "⚠️ Không sinh được BotMotionData.kt — dùng bản có sẵn trong zip"
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -290,3 +280,4 @@ jobs:
         run: |
           echo "❌ Unit tests failed — xem run summary."
           exit 1
+          
